@@ -3,11 +3,13 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: code-interpreter-sa
+  namespace: bee-code-interpreter
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: pod-manager-role
+  namespace: bee-code-interpreter
 rules:
 - apiGroups: [""]
   resources: ["pods", "pods/exec"]
@@ -17,6 +19,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: pod-manager-binding
+  namespace: bee-code-interpreter
 subjects:
 - kind: ServiceAccount
   name: code-interpreter-sa
@@ -25,18 +28,78 @@ roleRef:
   name: pod-manager-role
   apiGroup: rbac.authorization.k8s.io
 ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-interpreter-deployment
+  namespace: bee-code-interpreter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-interpreter
+  template:
+    metadata:
+      labels:
+        app: code-interpreter
+    spec:
+      serviceAccountName: code-interpreter-sa
+      securityContext:
+        fsGroup: 1000860000
+      containers:
+      - name: code-interpreter-service
+        image: us.icr.io/watson-orchestrate/bee-code-interpreter:rohit
+        ports:
+        - containerPort: 50051
+        - containerPort: 8000
+        env:
+        - name: APP_FILE_STORAGE_PATH
+          value: /storage
+        volumeMounts:
+        - name: storage-volume
+          mountPath: /storage
+        securityContext:
+          runAsUser: 1000860000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: storage-volume
+        emptyDir: {}
+---
 apiVersion: v1
-kind: Pod
+kind: Service
 metadata:
   name: code-interpreter-service
+  namespace: bee-code-interpreter
 spec:
-  serviceAccountName: code-interpreter-sa
-  containers:
-  - name: code-interpreter-service
-    image: localhost/bee-code-interpreter:local
-    ports:
-    - containerPort: 50051
-    - containerPort: 8000
-    env:
-    - name: APP_FILE_STORAGE_PATH
-      value: /storage
+  selector:
+    app: code-interpreter
+  ports:
+    - name: http-port
+      protocol: TCP
+      port: 80
+      targetPort: 8000
+    - name: grpc-port
+      protocol: TCP
+      port: 443
+      targetPort: 50051
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: code-interpreter-route
+  namespace: bee-code-interpreter
+spec:
+  host: code-interpreter-route-bee-code-interpreter.apps.wo-510-sb-ng-5.cp.fyre.ibm.com
+  to:
+    kind: Service
+    name: code-interpreter-service
+    weight: 100
+  port:
+    targetPort: http-port
+  wildcardPolicy: None
+

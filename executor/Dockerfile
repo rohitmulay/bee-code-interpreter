@@ -17,7 +17,7 @@ ARG UPM_VERSION="2.5.2"
 ARG ALPINE_VERSION="3.20"
 ARG RUST_VERSION="1.81"
 ARG PYTHON_VERSION="3.12"
-ARG UID="1001050000"
+ARG UID="1000860000"
 
 FROM docker.io/rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS build-executor-server
 WORKDIR /workdir
@@ -90,20 +90,39 @@ RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/t
 
 # Create user manually -- Alpine does not support high UIDs
 ARG UID
-RUN echo "executor:x:${UID}:${UID}::/home/executor:" >> /etc/passwd && \
-    echo "executor:!::0:::::" >> /etc/shadow && \
-    echo "executor:x:${UID}:" >> /etc/group && \
-    mkdir -p /home/executor /workspace /venv && \
-    chown -R executor:executor /home/executor /workspace /venv
+# Add custom user id and install necessary packages
+RUN apk add --no-cache util-linux shadow
+
+# Fixing chown issue for high UID user
+RUN echo "UID_MIN=1" >> /etc/login.defs && \
+    echo "UID_MAX=1000860000" >> /etc/login.defs && \
+    groupadd --gid 1000860000 executor && \
+    useradd -u 1000860000 -g 1000860000 -c 'executor' -s /bin/bash executor
+
+# Create directories with correct permissions
+RUN mkdir -p /home/executor /workspace /venv && \
+    chmod 777 /home/executor /workspace /venv
+
 USER executor
 
-# Cache fonts
+# Run font cache and matplotlib import as root to avoid setgroups issue
+USER root
 RUN fc-cache -fv && python -c "import matplotlib.pyplot"
+
+# Switch back to executor user
+USER executor
 
 # Python
 ARG PYTHON_VERSION
 COPY requirements.txt requirements-skip.txt /
-RUN python -m venv --system-site-packages /venv && /venv/bin/pip install --no-cache-dir -r /requirements.txt
+# Run Python venv creation and pip install as root to avoid setgroups issue
+USER root
+RUN python -m venv --system-site-packages /venv && \
+    /venv/bin/pip install --no-cache-dir -r /requirements.txt
+
+# Switch back to executor user
+USER root
+
 COPY sitecustomize.py /venv/lib/python${PYTHON_VERSION}/site-packages
 ENV PATH="/venv/bin:$PATH"
 ENV PYTHONPATH="/venv/lib/python${PYTHON_VERSION}/site-packages/"
