@@ -1,0 +1,105 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: code-interpreter-sa-default
+  namespace: bee-code-interpreter-default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-manager-role-default
+  namespace: bee-code-interpreter-default
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-manager-binding-default
+  namespace: bee-code-interpreter-default
+subjects:
+- kind: ServiceAccount
+  name: code-interpreter-sa-default
+roleRef:
+  kind: Role
+  name: pod-manager-role-default
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-interpreter-deployment-default
+  namespace: bee-code-interpreter-default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-interpreter-default
+  template:
+    metadata:
+      labels:
+        app: code-interpreter-default
+    spec:
+      serviceAccountName: code-interpreter-sa-default
+      securityContext:
+        fsGroup: 1000860000
+      containers:
+      - name: code-interpreter-service-default
+        image: iambeeagent/bee-code-interpreter:latest
+        ports:
+        - containerPort: 50051
+        - containerPort: 8000
+        env:
+        - name: APP_FILE_STORAGE_PATH
+          value: /storage
+        volumeMounts:
+        - name: storage-volume
+          mountPath: /storage
+        securityContext:
+          runAsUser: 1000860000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: storage-volume
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-interpreter-service-default
+  namespace: bee-code-interpreter-default
+spec:
+  selector:
+    app: code-interpreter-default
+  ports:
+    - name: http-port
+      protocol: TCP
+      port: 80
+      targetPort: 8000
+    - name: grpc-port
+      protocol: TCP
+      port: 443
+      targetPort: 50051
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: code-interpreter-route-default
+  namespace: bee-code-interpreter-default
+spec:
+  host: code-interpreter-route-bee-code-interpreter-default.apps.wo-510-sb-ng-5.cp.fyre.ibm.com
+  to:
+    kind: Service
+    name: code-interpreter-service-default
+    weight: 100
+  port:
+    targetPort: http-port
+  wildcardPolicy: None
+
